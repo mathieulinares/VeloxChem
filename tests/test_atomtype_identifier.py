@@ -6,13 +6,13 @@ class TestAtomTypeIdentifier:
 
     def run_atomtypeidentifier(self, xyz_string, expected_atomtypes,
                                expected_equal_charges_list,
-                               expected_equiv_atoms):
+                               expected_equiv_atoms, forcefield='gaff'):
 
-        atomtypeidentifier = AtomTypeIdentifier()
+        atomtypeidentifier = AtomTypeIdentifier(forcefield=forcefield)
         atomtypeidentifier.ostream.mute()
 
         molecule = Molecule.read_xyz_string(xyz_string)
-        atomtypes = atomtypeidentifier.generate_gaff_atomtypes(molecule)
+        atomtypes = atomtypeidentifier.generate_atomtypes(molecule, forcefield)
 
         assert atomtypes == expected_atomtypes
 
@@ -649,3 +649,61 @@ class TestAtomTypeIdentifier:
         self.run_atomtypeidentifier(xyz_string, expected_atomtypes,
                                     expected_equal_charges_list,
                                     expected_equiv_atoms)
+
+    def test_atomtypeidentifier_opls_butane(self):
+        """
+        Test OPLS atom type identification for butane.
+        """
+
+        xyz_string = """14
+        butane
+        C     -1.962049    0.121016    0.000050
+        H     -2.109257    0.754214    0.888026
+        H     -2.109343    0.754296   -0.887853
+        H     -2.751897   -0.643609    0.000052
+        C     -0.568377   -0.514088   -0.000056
+        H     -0.463006   -1.168632    0.880682
+        H     -0.463086   -1.168544   -0.880871
+        C      0.568377    0.514088   -0.000056
+        H      0.463086    1.168542   -0.880872
+        H      0.463006    1.168634    0.880681
+        C      1.962049   -0.121016    0.000051
+        H      2.109336   -0.754313   -0.887842
+        H      2.751897    0.643609    0.000031
+        H      2.109264   -0.754197    0.888037
+        """
+        expected_atomtypes = [
+            'opls_135', 'opls_140', 'opls_140', 'opls_140', 'opls_135', 'opls_140', 'opls_140', 
+            'opls_135', 'opls_140', 'opls_140', 'opls_135', 'opls_140', 'opls_140', 'opls_140'
+        ]
+        expected_equal_charges_list = [[1, 11], [2, 3, 4, 12, 13, 14], [5, 8],
+                                       [6, 7, 9, 10]]
+        expected_equiv_atoms = [
+            'c3_00', 'hc_00', 'hc_00', 'hc_00', 'c3_01', 'hc_01', 'hc_01',
+            'c3_01', 'hc_01', 'hc_01', 'c3_00', 'hc_00', 'hc_00', 'hc_00'
+        ]
+
+        self.run_atomtypeidentifier(xyz_string, expected_atomtypes,
+                                    expected_equal_charges_list,
+                                    expected_equiv_atoms, 'opls')
+
+    def test_atomtypeidentifier_backwards_compatibility(self):
+        """
+        Test that the old generate_gaff_atomtypes method still works.
+        """
+
+        xyz_string = """3
+        water
+        O      1.035010   -0.055790    0.042900
+        H      2.002900   -0.067860    0.087740
+        H      0.756160   -0.297060    0.939000
+        """
+        
+        atomtypeidentifier = AtomTypeIdentifier()
+        atomtypeidentifier.ostream.mute()
+
+        molecule = Molecule.read_xyz_string(xyz_string)
+        atomtypes = atomtypeidentifier.generate_gaff_atomtypes(molecule)
+
+        expected_atomtypes = ['ow', 'hw', 'hw']
+        assert atomtypes == expected_atomtypes
