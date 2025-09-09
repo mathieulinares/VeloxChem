@@ -45,18 +45,21 @@ from .errorhandler import safe_arccos
 class AtomTypeIdentifier:
     """
     A class to identify atom types in a molecule using GAFF (General Amber
-    Force Field) atom types based on a VeloxChem molecule object.
+    Force Field) or OPLS (Optimized Potentials for Liquid Simulations) atom 
+    types based on a VeloxChem molecule object.
 
     The class processes a molecule object containing the atomic coordinates of
-    a molecule to determine the types of atoms according to the GAFF. It
-    involves several steps including reading the file, determining covalent
-    radii, creating a connectivity matrix, identifying cyclic structures, and
-    assigning atom types.
+    a molecule to determine the types of atoms according to the selected 
+    forcefield. It involves several steps including reading the file, determining 
+    covalent radii, creating a connectivity matrix, identifying cyclic structures, 
+    and assigning atom types.
 
     :param comm:
         The MPI communicator.
     :param ostream:
         The output stream.
+    :param forcefield:
+        The forcefield to use ('gaff' or 'opls'). Default is 'gaff'.
 
     Instance variables
         - atomic_symbols: A list of atomic symbols for each atom in the
@@ -77,14 +80,21 @@ class AtomTypeIdentifier:
           atom.
         - atom_info_dict: A dictionary containing detailed information for each
           atom.
-        - atom_types_dict: A dictionary containing the GAFF atom types for each
+        - atom_types_dict: A dictionary containing the atom types for each
           atom.
 
     """
 
-    def __init__(self, comm=None, ostream=None):
+    def __init__(self, comm=None, ostream=None, forcefield='gaff'):
         """
         Initializes the AtomTypeIdentifier instance.
+        
+        :param comm:
+            The MPI communicator.
+        :param ostream:
+            The output stream.
+        :param forcefield:
+            The forcefield to use ('gaff' or 'opls'). Default is 'gaff'.
         """
 
         if comm is None:
@@ -103,6 +113,11 @@ class AtomTypeIdentifier:
 
         # output stream
         self.ostream = ostream
+
+        # forcefield selection
+        if forcefield.lower() not in ['gaff', 'opls']:
+            raise ValueError("forcefield must be 'gaff' or 'opls'")
+        self.forcefield = forcefield.lower()
 
         # GAFF version
         self.gaff_version = None
@@ -1797,24 +1812,46 @@ class AtomTypeIdentifier:
                     )
                     self.ostream.flush()
 
+    def extract_atom_types(self, forcefield=None):
+        """
+        Extracts atom types from the atom types dictionary for the specified forcefield.
+        
+        :param forcefield:
+            The forcefield to extract ('gaff' or 'opls'). If None, uses self.forcefield.
+        
+        :return:
+            A list of atom types for the specified forcefield.
+        """
+        
+        if forcefield is None:
+            forcefield = self.forcefield
+        
+        if forcefield.lower() not in ['gaff', 'opls']:
+            raise ValueError("forcefield must be 'gaff' or 'opls'")
+        
+        # Initialize the list of atom types
+        atom_types = []
+
+        # Sort atom types based on the number after the atomic symbol
+        sorted_atom_types = sorted(self.atom_types_dict.keys(),
+                                   key=self.get_atom_number)
+
+        # Append the atom types to the list
+        for atom_type in sorted_atom_types:
+            if isinstance(self.atom_types_dict[atom_type], dict):
+                ff_type = self.atom_types_dict[atom_type].get(forcefield.lower(), None)
+                if ff_type:
+                    atom_types.append(ff_type)
+        
+        return atom_types
+
     def extract_gaff_atom_types(self):
         """
         Extracts GAFF atom types from the atom types dictionary.
         """
 
         # Initialize the list of gaff atom types
-        self.gaff_atom_types = []
-
-        # Sort atom types based on the number after the atomic symbol
-        sorted_atom_types = sorted(self.atom_types_dict.keys(),
-                                   key=self.get_atom_number)
-
-        # Append the gaff atom types to the list
-        for atom_type in sorted_atom_types:
-            if isinstance(self.atom_types_dict[atom_type], dict):
-                gaff_type = self.atom_types_dict[atom_type].get('gaff', None)
-                if gaff_type:
-                    self.gaff_atom_types.append(gaff_type)
+        self.gaff_atom_types = self.extract_atom_types('gaff')
 
     def check_alternating_atom_types(self):
         """
@@ -1947,16 +1984,26 @@ class AtomTypeIdentifier:
         else:
             return list(common_cycle_numbers)
 
-    def generate_gaff_atomtypes(self, molecule, connectivity_matrix=None):
+    def generate_atomtypes(self, molecule, forcefield=None, connectivity_matrix=None):
         """
-        Generates GAFF (General Amber Force Field) atom types for a given molecule.
+        Generates atom types for a given molecule using the specified forcefield.
 
         :param molecule:
             A VeloxChem molecule object.
+        :param forcefield:
+            The forcefield to use ('gaff' or 'opls'). If None, uses self.forcefield.
+        :param connectivity_matrix:
+            Optional connectivity matrix. If None, computed from molecule.
 
         :return:
-            A list of GAFF atom types for each atom in the molecule.
+            A list of atom types for each atom in the molecule.
         """
+        
+        if forcefield is None:
+            forcefield = self.forcefield
+        
+        if forcefield.lower() not in ['gaff', 'opls']:
+            raise ValueError("forcefield must be 'gaff' or 'opls'")
 
         # Workflow of the method
         self.coordinates = molecule.get_coordinates_in_angstrom()
@@ -1973,27 +2020,34 @@ class AtomTypeIdentifier:
         self.detect_closed_cyclic_structures()
         self.create_atom_info_dict()
         self.decide_atom_type()
-        self.extract_gaff_atom_types()
-        self.check_alternating_atom_types()
+        
+        # Extract atom types for the specified forcefield
+        atom_types = self.extract_atom_types(forcefield)
+        
+        # Store the atom types for backwards compatibility
+        if forcefield.lower() == 'gaff':
+            self.gaff_atom_types = atom_types
+            self.check_alternating_atom_types()
+            atom_types = list(self.gaff_atom_types)
 
         # Printing output
+        ff_name = forcefield.upper()
         self.ostream.print_info("VeloxChem Atom Type Identification")
         self.ostream.print_info("-" * 40)  # Dashed line
 
         # Detected number of atoms
         num_atoms = molecule.number_of_atoms()
         self.ostream.print_info(f"Detected number of atoms: {num_atoms}")
+        self.ostream.print_info(f"Using {ff_name} forcefield")
 
         # Print table header
         self.ostream.print_info("{:<30} {:<20}".format(
-            "Symbol (id)", "GAFF atom type assigned"))
+            "Symbol (id)", f"{ff_name} atom type assigned"))
 
-        # Print atom symbol, atom number, and GAFF atom type for each atom
-        for i, (symbol, gaff_type) in enumerate(zip(self.atomic_symbols,
-                                                    self.gaff_atom_types),
-                                                start=1):
+        # Print atom symbol, atom number, and atom type for each atom
+        for i, (symbol, atom_type) in enumerate(zip(self.atomic_symbols, atom_types), start=1):
             self.ostream.print_info("{:<30} {:<20}".format(
-                f"{symbol} ({i})", gaff_type))
+                f"{symbol} ({i})", atom_type))
 
         # Print cycle information (aromaticity) for each cycle
         cycle_sizes = [len(cycle) for cycle in self.reduced_cycles]
@@ -2015,12 +2069,47 @@ class AtomTypeIdentifier:
                 self.ostream.print_info(
                     f"Cycle size {size}: Pure Aromatic Cycle")
 
-        if self.bad_hydrogen:
+        if self.bad_hydrogen and forcefield.lower() == 'gaff':
             self.ostream.print_warning('Hydrogen type not defined in GAFF')
+        elif self.bad_hydrogen and forcefield.lower() == 'opls':
+            self.ostream.print_warning('Hydrogen type not defined in OPLS')
 
         self.ostream.flush()
 
-        return list(self.gaff_atom_types)
+        return atom_types
+
+    def generate_gaff_atomtypes(self, molecule, connectivity_matrix=None):
+        """
+        Generates GAFF (General Amber Force Field) atom types for a given molecule.
+        
+        This method is kept for backwards compatibility.
+
+        :param molecule:
+            A VeloxChem molecule object.
+        :param connectivity_matrix:
+            Optional connectivity matrix. If None, computed from molecule.
+
+        :return:
+            A list of GAFF atom types for each atom in the molecule.
+        """
+        
+        return self.generate_atomtypes(molecule, 'gaff', connectivity_matrix)
+
+    def generate_opls_atomtypes(self, molecule, connectivity_matrix=None):
+        """
+        Generates OPLS (Optimized Potentials for Liquid Simulations) atom types 
+        for a given molecule.
+
+        :param molecule:
+            A VeloxChem molecule object.
+        :param connectivity_matrix:
+            Optional connectivity matrix. If None, computed from molecule.
+
+        :return:
+            A list of OPLS atom types for each atom in the molecule.
+        """
+        
+        return self.generate_atomtypes(molecule, 'opls', connectivity_matrix)
     
     @staticmethod
     def get_atom_number(atom_type_str):

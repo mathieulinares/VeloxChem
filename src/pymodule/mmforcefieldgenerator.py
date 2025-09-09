@@ -63,7 +63,7 @@ from .environment import get_data_path
 
 class MMForceFieldGenerator:
     """
-    Parameterizes general Amber force field and creates Gromacs topologies.
+    Parameterizes force fields (GAFF or OPLS) and creates Gromacs topologies.
 
     # vlxtag: RKS, MM_Force_Field_Generation
 
@@ -74,6 +74,7 @@ class MMForceFieldGenerator:
 
     Instance variables:
         - molecule_name: The name of the molecule.
+        - forcefield: The forcefield to use ('gaff' or 'opls').
         - eq_param: If equilibrium bond lengths and angles should be used.
         - r_thresh: The threshold for warning if bond lenghts deviate (nm).
         - theta_thresh: The threshold for warning if bond angle deviate (deg).
@@ -121,6 +122,9 @@ class MMForceFieldGenerator:
         self.scan_xyz_files = None
         self.atom_types = None
         self.rotatable_bonds = []
+
+        # forcefield selection
+        self.forcefield = 'gaff'  # default to GAFF for backwards compatibility
 
         # topology settings
         self.eq_param = True
@@ -185,6 +189,7 @@ class MMForceFieldGenerator:
             'workdir': 'str',
             'scan_xyz_files': 'seq_fixed_str',
             'atom_types': 'seq_fixed_str',
+            'forcefield': 'str',
             'eq_param': 'bool',
             'r_thresh': 'float',
             'theta_thresh': 'float',
@@ -204,6 +209,14 @@ class MMForceFieldGenerator:
         }
 
         parse_input(self, ffg_keywords, ffg_dict)
+
+        # Validate forcefield parameter
+        if hasattr(self, 'forcefield') and self.forcefield.lower() not in ['gaff', 'opls']:
+            raise ValueError("forcefield must be 'gaff' or 'opls'")
+        
+        # Ensure forcefield is lowercase for consistency
+        if hasattr(self, 'forcefield'):
+            self.forcefield = self.forcefield.lower()
 
         if 'filename' in ffg_dict and 'molecule_name' not in ffg_dict:
             self.molecule_name = ffg_dict['filename']
@@ -1083,19 +1096,19 @@ class MMForceFieldGenerator:
         coords = self.molecule.get_coordinates_in_angstrom()
         n_atoms = self.molecule.number_of_atoms()
 
-        atomtypeidentifier = AtomTypeIdentifier(self.comm)
+        atomtypeidentifier = AtomTypeIdentifier(self.comm, forcefield=self.forcefield)
         atomtypeidentifier.ostream.mute()
         # set GAFF version
         atomtypeidentifier.gaff_version = gaff_version
 
         if self.topology_update_flag:
-            self.atom_types = atomtypeidentifier.generate_gaff_atomtypes(
-                self.molecule, self.connectivity_matrix)
+            self.atom_types = atomtypeidentifier.generate_atomtypes(
+                self.molecule, self.forcefield, self.connectivity_matrix)
             # The partial charges have to be recalculated
             self.partial_charges = None
         else:
-            self.atom_types = atomtypeidentifier.generate_gaff_atomtypes(
-                self.molecule)
+            self.atom_types = atomtypeidentifier.generate_atomtypes(
+                self.molecule, self.forcefield)
             self.connectivity_matrix = np.copy(
                 atomtypeidentifier.connectivity_matrix)
             
